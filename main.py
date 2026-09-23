@@ -2,19 +2,15 @@ import os
 import re
 import sqlite3
 import logging
+import requests
 from flask import Flask, request, jsonify
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-import easyocr
 import threading
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# ቶከኑን ከ Render Environment Variable ወይም በቀጥታ ማግኘት
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8916049187:AAENsAlv1HpaFOK5IPrnUOrMwdyyfnypBao")
-
-# EasyOCR አንባቢ - ለ Render ቀላል እንዲሆን በእንግሊዝኛ ብቻ እና CPU ሞድ ተዘጋጅቷል
-reader = easyocr.Reader(['en'], gpu=False)
 
 def init_db():
     conn = sqlite3.connect('payments.db')
@@ -72,6 +68,26 @@ def check_transaction(extracted_text):
                 
     conn.close()
     return "NOT_FOUND", None, None, None
+
+def ocr_space_file(filename, api_key='K88722978688957'):
+    payload = {
+        'isOverlayRequired': False,
+        'apikey': api_key,
+        'language': 'eng',
+        'OCREngine': 2
+    }
+    with open(filename, 'rb') as f:
+        r = requests.post(
+            'https://api.ocr.space/parse/image',
+            files={'file': f},
+            data=payload,
+            timeout=30
+        )
+    result = r.json()
+    parsed_results = result.get('ParsedResults')
+    if parsed_results:
+        return parsed_results[0].get('ParsedText', '')
+    return ''
 
 app = Flask(__name__)
 
@@ -144,9 +160,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo_file = await update.message.photo[-1].get_file()
         await photo_file.download_to_drive(file_path)
 
-        # በ EasyOCR ምስሉን ማንበብ
-        results = reader.readtext(file_path, detail=0)
-        extracted_text = " ".join(results)
+        extracted_text = ocr_space_file(file_path)
 
         if os.path.exists(file_path):
             os.remove(file_path)
