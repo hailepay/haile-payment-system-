@@ -10,9 +10,10 @@ import threading
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
+# ቶከኑን ከ Render Environment Variable ወይም በቀጥታ ማግኘት
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8916049187:AAENsAlv1HpaFOK5IPrnUOrMwdyyfnypBao")
 
-# EasyOCR ሞዴል ማዘጋጀት
+# EasyOCR አንባቢ - ለ Render ቀላል እንዲሆን በእንግሊዝኛ ብቻ እና CPU ሞድ ተዘጋጅቷል
 reader = easyocr.Reader(['en'], gpu=False)
 
 def init_db():
@@ -53,7 +54,9 @@ def check_transaction(extracted_text):
     cursor = conn.cursor()
     cursor.execute('SELECT txn_id, amount, sender, verified FROM transactions')
     rows = cursor.fetchall()
+    
     cleaned_extracted = re.sub(r'[^A-Za-z0-9]', '', extracted_text).upper()
+    
     for row in rows:
         txn_id, amount, sender, verified = row
         clean_txn = re.sub(r'[^A-Za-z0-9]', '', txn_id).upper()
@@ -66,6 +69,7 @@ def check_transaction(extracted_text):
                 conn.commit()
                 conn.close()
                 return "SUCCESS", txn_id, amount, sender
+                
     conn.close()
     return "NOT_FOUND", None, None, None
 
@@ -80,6 +84,7 @@ def receive_sms():
     data = request.json or request.form
     sender = data.get('sender', '') or data.get('from', '')
     message = data.get('message', '') or data.get('content', '') or data.get('text', '')
+
     logging.info(f"Incoming SMS from: {sender} | Content: {message}")
 
     valid_senders = [
@@ -88,6 +93,7 @@ def receive_sms():
         'DASHEN', 'DASHENBANK', 'SIINQEE', 'SINQEE'
     ]
     is_valid_sender = any(s in sender.upper() for s in valid_senders)
+
     if not is_valid_sender:
         return jsonify({"status": "ignored", "reason": "Not an authorized bank SMS"}), 200
 
@@ -133,9 +139,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status_msg = await update.message.reply_text("ደረሰኙ እየተመረመረ ነው... እባክዎ ጥቂት ሰከንዶች ይጠብቁ።")
+    file_path = f"temp_{update.message.chat_id}.jpg"
     try:
         photo_file = await update.message.photo[-1].get_file()
-        file_path = f"temp_{update.message.chat_id}.jpg"
         await photo_file.download_to_drive(file_path)
 
         # በ EasyOCR ምስሉን ማንበብ
@@ -173,6 +179,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logging.error(f"Error processing receipt: {e}")
+        if os.path.exists(file_path):
+            os.remove(file_path)
         await status_msg.edit_text("ደረሰኙን በማንበብ ሂደት ላይ ስህተት አጋጥሟል። እባክዎ ግልጽ ፎቶ በድጋሚ ይላኩ።")
 
 def run_flask():
