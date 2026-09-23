@@ -5,18 +5,16 @@ import logging
 from flask import Flask, request, jsonify
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-import pytesseract
-from PIL import Image
+import easyocr
 import threading
 
-# ሎግ ማስተካከያ
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
-# የቦት ቶከን
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8916049187:AAENsAlv1HpaFOK5IPrnUOrMwdyyfnypBao")
 
+# EasyOCR ሞዴል ማዘጋጀት
+reader = easyocr.Reader(['en'], gpu=False)
 
-# ዳታቤዝ ማዘጋጀት
 def init_db():
     conn = sqlite3.connect('payments.db')
     cursor = conn.cursor()
@@ -35,7 +33,6 @@ def init_db():
 
 init_db()
 
-# የባንክ መልዕክት ማስገቢያ
 def save_transaction(txn_id, sender, amount, raw_text):
     try:
         conn = sqlite3.connect('payments.db')
@@ -51,15 +48,12 @@ def save_transaction(txn_id, sender, amount, raw_text):
         logging.error(f"DB Error: {e}")
         return False
 
-# ክፍያ ማረጋገጫ
 def check_transaction(extracted_text):
     conn = sqlite3.connect('payments.db')
     cursor = conn.cursor()
     cursor.execute('SELECT txn_id, amount, sender, verified FROM transactions')
     rows = cursor.fetchall()
-    
     cleaned_extracted = re.sub(r'[^A-Za-z0-9]', '', extracted_text).upper()
-    
     for row in rows:
         txn_id, amount, sender, verified = row
         clean_txn = re.sub(r'[^A-Za-z0-9]', '', txn_id).upper()
@@ -72,37 +66,31 @@ def check_transaction(extracted_text):
                 conn.commit()
                 conn.close()
                 return "SUCCESS", txn_id, amount, sender
-                
     conn.close()
     return "NOT_FOUND", None, None, None
 
-# Flask ሰርቨር (ለ SMS Forwarder)
 app = Flask(__name__)
 
 @app.route('/', methods=['GET'])
 def home():
-    return "Multi-Bank Payment Server is running actively!", 200
+    return "Payment Verification System is active and running!", 200
 
 @app.route('/sms-webhook', methods=['POST'])
 def receive_sms():
     data = request.json or request.form
     sender = data.get('sender', '') or data.get('from', '')
     message = data.get('message', '') or data.get('content', '') or data.get('text', '')
-
     logging.info(f"Incoming SMS from: {sender} | Content: {message}")
 
-    # የተፈቀዱ ባንኮች ዝርዝር (Telebirr, CBE, Awash, Abyssinia, Dashen, Siinqee)
     valid_senders = [
         'TELEBIRR', 'CBE', '127', '889', 'COMMERCIAL BANK',
         'AWASH', 'AWASHBANK', 'ABYSSINIA', 'BOA',
         'DASHEN', 'DASHENBANK', 'SIINQEE', 'SINQEE'
     ]
     is_valid_sender = any(s in sender.upper() for s in valid_senders)
-
     if not is_valid_sender:
         return jsonify({"status": "ignored", "reason": "Not an authorized bank SMS"}), 200
 
-    # የግብይት መለያ (Txn ID / Ref Number) ማውጫ
     txn_id = None
     txn_patterns = [
         r'(?:transaction\s*id|trans\.?\s*id|txn\s*id|tid)[:\s]*([A-Z0-9]+)',
@@ -120,7 +108,6 @@ def receive_sms():
         if words:
             txn_id = words[0]
 
-    # የገንዘብ መጠን ማውጫ
     amount_match = re.search(r'(?:ETB|BIRR|ብር|ከፍለዋል|ተቀብለዋል|credited|received)\s*([0-9,]+(?:\.[0-9]{1,2})?)', message, re.IGNORECASE)
     amount = amount_match.group(1) if amount_match else "ያልተገለጸ"
 
@@ -130,18 +117,17 @@ def receive_sms():
 
     return jsonify({"status": "no_txn_found"}), 200
 
-# የቴሌግራም ቦት ትዕዛዞች
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "ሰላም! እንኳን ወደ ክፍያ ማረጋገጫ ሲስተም በደህና መጡ።\n\n"
-        "የሚደገፉ ባንኮች፦\n"
+        "የሚደገፉ ተቋማት፦\n"
         "• ቴሌብር (Telebirr)\n"
         "• የኢትዮጵያ ንግድ ባንክ (CBE)\n"
         "• አዋሽ ባንክ (Awash)\n"
         "• አቢሲኒያ ባንክ (BOA)\n"
         "• ዳሽን ባንክ (Dashen)\n"
         "• ስንቄ ባንክ (Siinqee)\n\n"
-        "እባክዎ የከፈሉበትን ደረሰኝ ፎቶ (Screenshot) እዚህ ይላኩ።"
+        "እባክዎ የተፈጸመውን የክፍያ ደረሰኝ ፎቶ (Screenshot) እዚህ ይላኩ።"
     )
     await update.message.reply_text(msg)
 
@@ -152,12 +138,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_path = f"temp_{update.message.chat_id}.jpg"
         await photo_file.download_to_drive(file_path)
 
-        # ጽሑፉን ከፎቶው ላይ ማንበብ
-        extracted_text = pytesseract.image_to_string(Image.open(file_path))
+        # በ EasyOCR ምስሉን ማንበብ
+        results = reader.readtext(file_path, detail=0)
+        extracted_text = " ".join(results)
+
         if os.path.exists(file_path):
             os.remove(file_path)
 
-        # ክፍያውን ከዳታቤዝ ጋር ማመሳከር
         result, txn_id, amount, sender = check_transaction(extracted_text)
 
         if result == "SUCCESS":
@@ -177,7 +164,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response = (
                 "❌ ክፍያው ሊረጋገጥ አልቻለም!\n\n"
                 "ምክንያቶች፦\n"
-                "1. የባንክ የገቢ መልዕክት ወደ ሲስተማችን ገና አልደረሰም ይሆናል።\n"
+                "1. የባንክ የገቢ መልዕክት ወደ ሲስተማችን ገና አልደረሰም።\n"
                 "2. የላኩት ፎቶ ግልጽ አይደለም።\n\n"
                 "እባክዎ ጥቂት ቆይተው እንደገና ይሞክሩ።"
             )
