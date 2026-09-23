@@ -1,6 +1,4 @@
-Flask
+flask
 python-telegram-bot
-pytesseract
-Pillow
-requests
-gunicorn
+pillow
+easyocr
