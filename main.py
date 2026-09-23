@@ -13,7 +13,8 @@ import threading
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # የቦት ቶከን
-BOT_TOKEN = "8916049187:AAENsAlv1HpaFOK5IPrnUOrMwdyyfnypBao"
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+
 
 # ዳታቤዝ ማዘጋጀት
 def init_db():
