@@ -1,4 +1,4 @@
 flask
 python-telegram-bot
 pillow
-easyocr
+requests
